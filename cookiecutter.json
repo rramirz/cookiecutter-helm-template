@@ -1,0 +1,10 @@
+{
+  "chart_name": "my-chart",
+  "chart_version": "0.1.0",
+  "chart_repository": "https://charts.example.com",
+  "__prompts__": {
+    "chart_name": "Select your package name",
+    "chart_version": "Select your package version",
+    "chart_repository": "Select your package repository"
+  }
+}
