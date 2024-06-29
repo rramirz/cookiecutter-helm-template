@@ -1,2 +1,12 @@
+# Specify the PostgreSQL cluster name
+# psqlClusterName: home-postgres-cluster
+
+# List of databases to deploy
+databases: []
+  # - name: gitea
+  #   dbName: gitea-test-db
+  # - name: wordpress
+  #   dbName: wordpress-test-db
+
 {{ cookiecutter.chart_name }}:
 
