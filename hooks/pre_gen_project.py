@@ -17,20 +17,36 @@ def find_chart_details(chart_name):
     if not charts:
         raise FailedHookException(f"No charts found for '{chart_name}' in Helm repositories.")
     
-    # Get the latest version and repo URL
-    latest_chart = charts[0]  # Assuming the first result is the latest
-    chart_version = latest_chart["version"]
+    # Get the list of versions and the latest chart
+    latest_chart = charts[0]
+    versions = [chart["version"] for chart in charts]
+    repo_name = latest_chart["name"].split('/')[0]
+
+    # Get the repository URL
     chart_repo = run_helm_command("helm repo list -o json")
     chart_repo_list = json.loads(chart_repo)
-
-    # Match the repository name with the Helm search result
-    repo_name = latest_chart["name"].split('/')[0]
     repo_url = next((repo["url"] for repo in chart_repo_list if repo["name"] == repo_name), None)
 
     if not repo_url:
         raise FailedHookException(f"Repository URL not found for repo '{repo_name}'.")
 
-    return chart_version, repo_url
+    return versions, repo_url
+
+def select_version(versions):
+    print("\nAvailable versions:")
+    for i, version in enumerate(versions, start=1):
+        print(f"{i}. {version}")
+    
+    choice = input(f"Choose a version [1-{len(versions)}] (default: latest): ").strip()
+    
+    if choice.isdigit():
+        choice_index = int(choice) - 1
+        if 0 <= choice_index < len(versions):
+            return versions[choice_index]
+    
+    # Default to the latest version
+    print(f"Defaulting to the latest version: {versions[0]}")
+    return versions[0]
 
 def main():
     chart_name = "{{ cookiecutter.chart_name }}"
@@ -38,14 +54,17 @@ def main():
         raise FailedHookException("You must specify a chart name.")
 
     print(f"Searching Helm repositories for chart: {chart_name}")
-    chart_version, chart_repo = find_chart_details(chart_name)
+    versions, chart_repo = find_chart_details(chart_name)
+
+    # Let the user select a version
+    selected_version = select_version(versions)
 
     # Update context for Cookiecutter
     with open("{{ cookiecutter._template }}", "r") as f:
         context = json.load(f)
     
-    context["chart_version"] = chart_version
-    context["chart_repo"] = chart_repo
+    context["chart_version"] = selected_version
+    context["chart_repository"] = chart_repo
 
     with open("{{ cookiecutter._template }}", "w") as f:
         json.dump(context, f, indent=2)

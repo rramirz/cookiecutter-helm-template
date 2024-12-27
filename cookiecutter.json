@@ -1,10 +1,10 @@
 {
   "chart_name": "my-chart",
-  "chart_version": "0.1.0",
-  "chart_repository": "https://charts.example.com",
+  "chart_version": "latest",
+  "chart_repository": "auto-detect",
   "__prompts__": {
     "chart_name": "Name of chart you want to install",
-    "chart_version": "Version of chart you want to install",
-    "chart_repository": "Repository of chart you want to install"
+    "chart_version": "Version of chart you want to install (choose from the list)",
+    "chart_repository": "Repository of chart you want to install (auto-detected)"
   }
 }
