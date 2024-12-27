@@ -59,14 +59,19 @@ def main():
     # Let the user select a version
     selected_version = select_version(versions)
 
-    # Update context for Cookiecutter
-    with open("{{ cookiecutter._template }}", "r") as f:
-        context = json.load(f)
-    
-    context["chart_version"] = selected_version
-    context["chart_repository"] = chart_repo
+    print(f"\nSelected chart details:")
+    print(f"  Chart Name: {chart_name}")
+    print(f"  Chart Version: {selected_version}")
+    print(f"  Chart Repository: {chart_repo}")
 
-    with open("{{ cookiecutter._template }}", "w") as f:
+    # Update context for Cookiecutter
+    context = {
+        "chart_name": chart_name,
+        "chart_version": selected_version,
+        "chart_repository": chart_repo,
+    }
+
+    with open("context.json", "w") as f:
         json.dump(context, f, indent=2)
 
 if __name__ == "__main__":
