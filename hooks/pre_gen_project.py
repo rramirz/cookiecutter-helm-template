@@ -1,5 +1,6 @@
 import subprocess
 import json
+import os
 from cookiecutter.exceptions import FailedHookException
 
 def run_helm_command(command):
@@ -64,14 +65,15 @@ def main():
     print(f"  Chart Version: {selected_version}")
     print(f"  Chart Repository: {chart_repo}")
 
-    # Update context for Cookiecutter
-    context = {
-        "chart_name": chart_name,
-        "chart_version": selected_version,
-        "chart_repository": chart_repo,
-    }
+    # Update context dynamically
+    context_path = os.path.join(os.getcwd(), ".cookiecutter.json")
+    with open(context_path, "r") as f:
+        context = json.load(f)
 
-    with open("context.json", "w") as f:
+    context["chart_version"] = selected_version
+    context["chart_repository"] = chart_repo
+
+    with open(context_path, "w") as f:
         json.dump(context, f, indent=2)
 
 if __name__ == "__main__":
