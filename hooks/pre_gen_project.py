@@ -66,7 +66,7 @@ def main():
     print(f"  Chart Repository: {chart_repo}")
 
     # Update context dynamically
-    context_path = os.path.join(os.getcwd(), ".cookiecutter.json")
+    context_path = os.path.join(os.getcwd(), "cookiecutter.json")
     with open(context_path, "r") as f:
         context = json.load(f)
 
