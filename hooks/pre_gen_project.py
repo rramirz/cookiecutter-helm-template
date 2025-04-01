@@ -1,6 +1,7 @@
 import subprocess
 import json
 import os
+import sys
 from cookiecutter.exceptions import FailedHookException
 
 def run_helm_command(command):
@@ -49,7 +50,31 @@ def select_version(versions):
     print(f"Defaulting to the latest version: {versions[0]}")
     return versions[0]
 
+def update_cookiecutter_json():
+    # Find the template root directory
+    template_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    cookiecutter_json_path = os.path.join(template_dir, "cookiecutter.json")
+    
+    # Read the current cookiecutter.json
+    with open(cookiecutter_json_path, "r") as f:
+        context = json.load(f)
+    
+    # Add chart_version and chart_repository fields if they don't exist
+    if "chart_version" not in context:
+        context["chart_version"] = ""
+    if "chart_repository" not in context:
+        context["chart_repository"] = ""
+    
+    # Write the updated context back
+    with open(cookiecutter_json_path, "w") as f:
+        json.dump(context, f, indent=2)
+    
+    return cookiecutter_json_path
+
 def main():
+    # First, update the cookiecutter.json to include our new variables
+    cookiecutter_json_path = update_cookiecutter_json()
+    
     chart_name = "{{ cookiecutter.chart_name }}"
     if chart_name == "my-chart":
         raise FailedHookException("You must specify a chart name.")
@@ -65,21 +90,20 @@ def main():
     print(f"  Chart Version: {selected_version}")
     print(f"  Chart Repository: {chart_repo}")
     
-    # Instead of trying to modify cookiecutter.json directly, 
-    # set environment variables that can be used in cookiecutter templates
-    os.environ["COOKIECUTTER_CHART_VERSION"] = selected_version
-    os.environ["COOKIECUTTER_CHART_REPOSITORY"] = chart_repo
+    # Read the current context
+    with open(cookiecutter_json_path, "r") as f:
+        context = json.load(f)
     
-    # If you want to make these variables available to other files in the template
-    # Create a temporary file in a location that will be copied to the output directory
-    temp_config = {
-        "chart_version": selected_version,
-        "chart_repository": chart_repo
-    }
+    # Update the context with our values
+    context["chart_version"] = selected_version
+    context["chart_repository"] = chart_repo
     
-    # Create a file in the template directory that will be copied to the output
-    with open("chart_config.json", "w") as f:
-        json.dump(temp_config, f, indent=2)
+    # Write the updated context back
+    with open(cookiecutter_json_path, "w") as f:
+        json.dump(context, f, indent=2)
+    
+    # Exit with a special code to signal cookiecutter to reload the context
+    sys.exit(0)
 
 if __name__ == "__main__":
     main()
