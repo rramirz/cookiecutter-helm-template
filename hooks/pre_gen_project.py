@@ -22,15 +22,15 @@ def find_chart_details(chart_name):
     latest_chart = charts[0]
     versions = [chart["version"] for chart in charts]
     repo_name = latest_chart["name"].split('/')[0]
-
+    
     # Get the repository URL
     chart_repo = run_helm_command("helm repo list -o json")
     chart_repo_list = json.loads(chart_repo)
     repo_url = next((repo["url"] for repo in chart_repo_list if repo["name"] == repo_name), None)
-
+    
     if not repo_url:
         raise FailedHookException(f"Repository URL not found for repo '{repo_name}'.")
-
+    
     return versions, repo_url
 
 def select_version(versions):
@@ -53,29 +53,33 @@ def main():
     chart_name = "{{ cookiecutter.chart_name }}"
     if chart_name == "my-chart":
         raise FailedHookException("You must specify a chart name.")
-
+    
     print(f"Searching Helm repositories for chart: {chart_name}")
     versions, chart_repo = find_chart_details(chart_name)
-
+    
     # Let the user select a version
     selected_version = select_version(versions)
-
+    
     print(f"\nSelected chart details:")
     print(f"  Chart Name: {chart_name}")
     print(f"  Chart Version: {selected_version}")
     print(f"  Chart Repository: {chart_repo}")
-
-    # Update context dynamically
-    context_path = os.path.join(os.getcwd(), "cookiecutter.json")
-    with open(context_path, "r") as f:
-        context = json.load(f)
-
-    context["chart_version"] = selected_version
-    context["chart_repository"] = chart_repo
-
-    with open(context_path, "w") as f:
-        json.dump(context, f, indent=2)
+    
+    # Instead of trying to modify cookiecutter.json directly, 
+    # set environment variables that can be used in cookiecutter templates
+    os.environ["COOKIECUTTER_CHART_VERSION"] = selected_version
+    os.environ["COOKIECUTTER_CHART_REPOSITORY"] = chart_repo
+    
+    # If you want to make these variables available to other files in the template
+    # Create a temporary file in a location that will be copied to the output directory
+    temp_config = {
+        "chart_version": selected_version,
+        "chart_repository": chart_repo
+    }
+    
+    # Create a file in the template directory that will be copied to the output
+    with open("chart_config.json", "w") as f:
+        json.dump(temp_config, f, indent=2)
 
 if __name__ == "__main__":
     main()
-
