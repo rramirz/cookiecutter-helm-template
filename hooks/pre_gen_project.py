@@ -83,8 +83,9 @@ def find_chart_details(chart_name):
                 selected_index = 0
     
     selected_chart = available_charts[selected_index]
-    chart_name_parts = selected_chart["name"].split('/')
-    repo_name = chart_name_parts[0]
+    full_chart_name = selected_chart["name"]
+    chart_version = selected_chart["version"]
+    repo_name = full_chart_name.split('/')[0]
     
     # Get the repository URL
     chart_repo = run_helm_command("helm repo list -o json")
@@ -94,7 +95,7 @@ def find_chart_details(chart_name):
     if not repo_url:
         raise FailedHookException(f"Repository URL not found for repo '{repo_name}'.")
     
-    return selected_chart["name"], selected_chart["version"], repo_url
+    return full_chart_name, chart_version, repo_url
 
 # This function is no longer needed as version selection is now handled in find_chart_details
 def select_version(versions):
@@ -147,6 +148,18 @@ def main():
     os.environ["COOKIECUTTER_CHART_NAME"] = full_chart_name
     os.environ["COOKIECUTTER_CHART_VERSION"] = chart_version
     os.environ["COOKIECUTTER_CHART_REPOSITORY"] = chart_repo
+    
+    # Record values in a temporary file that post_gen can read
+    tmp_file = os.path.join(os.getcwd(), "_cookiecutter_helm_vars.json")
+    try:
+        with open(tmp_file, "w") as f:
+            json.dump({
+                "chart_name": full_chart_name,
+                "chart_version": chart_version,
+                "chart_repository": chart_repo
+            }, f)
+    except Exception as e:
+        print(f"Warning: Could not write temporary file {tmp_file}: {str(e)}")
     
     # Try to update cookiecutter.json, but continue if it fails
     try:

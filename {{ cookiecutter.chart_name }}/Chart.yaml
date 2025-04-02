@@ -1,4 +1,6 @@
 apiVersion: v2
 name: {{ cookiecutter.chart_name }}
-version: {{ cookiecutter.chart_version }}
-repository: {{ cookiecutter.chart_repository }}
+description: Helm chart for {{ cookiecutter.chart_name }}
+type: application
+version: 0.1.0
+appVersion: "1.0.0"
