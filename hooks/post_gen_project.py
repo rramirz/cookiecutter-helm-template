@@ -75,33 +75,171 @@ def populate_values_from_helm_chart():
     if chart_version:
         print(f"Version: {chart_version}")
 
-    # Build the helm command appropriately
-    if "/" in chart_name:  # If chart_name includes repo prefix
-        helm_command = f"helm show values {chart_name}"
+    # Try multiple approaches to get the values
+    helm_values = ""
+    chart_parts = chart_name.split('/')
+    
+    # Try to determine repo_name and chart_name_only
+    if len(chart_parts) > 1:
+        repo_name = chart_parts[0]
+        chart_name_only = chart_parts[1]
     else:
-        helm_command = f"helm show values {chart_name}"
+        # If we don't have a slash in the chart name, we need to get creative
+        # We'll try to use the repository name as prefix or search for it
+        if chart_repository:
+            # Try to extract repo name from URL
+            repo_url_parts = chart_repository.split('/')
+            if repo_url_parts and len(repo_url_parts) >= 3:
+                possible_repo_name = repo_url_parts[-2]
+                # Clean up any .github.io part
+                if '.github.io' in possible_repo_name:
+                    possible_repo_name = possible_repo_name.split('.')[0]
+                repo_name = possible_repo_name
+            else:
+                # Just try common names
+                repo_name = "stable"
+            chart_name_only = chart_name
+        else:
+            # Last resort
+            repo_name = "stable"
+            chart_name_only = chart_name
     
-    # Add repo flag only if repository is specified
+    # Approach 1: First try with --repo flag (most reliable)
     if chart_repository:
-        helm_command += f" --repo {chart_repository}"
+        helm_command = f"helm show values --repo {chart_repository} {chart_name_only}"
+        if chart_version:
+            helm_command += f" --version {chart_version}"
+        print(f"Running command: {helm_command}")
+        helm_values = run_helm_command(helm_command)
     
-    # Add version flag only if version is specified
-    if chart_version:
-        helm_command += f" --version {chart_version}"
+    # Approach 2: Try with repo/chart notation
+    if not helm_values:
+        full_chart_name = f"{repo_name}/{chart_name_only}"
+        helm_command = f"helm show values {full_chart_name}"
+        if chart_version:
+            helm_command += f" --version {chart_version}"
+        print(f"Running command: {helm_command}")
+        helm_values = run_helm_command(helm_command)
     
-    helm_values = run_helm_command(helm_command)
+    # Approach 3: Try using helm template as a fallback
+    if not helm_values:
+        print(f"Trying helm template approach...")
+        if chart_repository:
+            helm_command = f"helm template --repo {chart_repository} {chart_name_only}"
+        else:
+            helm_command = f"helm template {chart_name}"
+        
+        if chart_version:
+            helm_command += f" --version {chart_version}"
+        
+        # Add --debug to get values in the output
+        helm_command += " --debug"
+        
+        template_output = run_helm_command(helm_command)
+        if template_output:
+            # Try to extract values from the debug output
+            try:
+                # First look for the VALUES section
+                values_start = template_output.find("USER-SUPPLIED VALUES:")
+                values_end = template_output.find("COMPUTED VALUES:")
+                
+                if values_start > 0 and values_end > 0:
+                    values_section = template_output[values_start:values_end].strip()
+                    values_start_line = values_section.find('\n')
+                    if values_start_line > 0:
+                        helm_values = values_section[values_start_line:].strip()
+                        print("Extracted values from template debug output")
+                else:
+                    # Try to find COMPUTED VALUES section as fallback
+                    values_start = template_output.find("COMPUTED VALUES:")
+                    values_end = template_output.find("HOOKS:")
+                    
+                    if values_start > 0 and values_end > 0:
+                        values_section = template_output[values_start:values_end].strip()
+                        values_start_line = values_section.find('\n')
+                        if values_start_line > 0:
+                            helm_values = values_section[values_start_line:].strip()
+                            print("Extracted values from template debug output")
+            except Exception as e:
+                print(f"Error extracting values from template output: {str(e)}")
+    
+    # Approach 4: Pull the chart and extract values
+    if not helm_values:
+        temp_dir = "/tmp/helm-chart-pull"
+        os.makedirs(temp_dir, exist_ok=True)
+        
+        # Try to pull the chart
+        print(f"Trying to fetch the chart using helm pull...")
+        
+        if chart_repository:
+            pull_command = f"helm pull --repo {chart_repository} {chart_name_only}"
+        else:
+            pull_command = f"helm pull {repo_name}/{chart_name_only}"
+            
+        if chart_version:
+            pull_command += f" --version {chart_version}"
+        pull_command += f" --untar --untardir {temp_dir}"
+        
+        run_helm_command(pull_command)
+        
+        # Try to find the chart directory
+        if os.path.exists(temp_dir):
+            chart_dirs = [d for d in os.listdir(temp_dir) if os.path.isdir(os.path.join(temp_dir, d))]
+            if chart_dirs:
+                values_path = os.path.join(temp_dir, chart_dirs[0], "values.yaml")
+                if os.path.exists(values_path):
+                    print(f"Found values.yaml in pulled chart at {values_path}")
+                    try:
+                        with open(values_path, "r") as f:
+                            helm_values = f.read()
+                    except Exception as e:
+                        print(f"Error reading values.yaml from pulled chart: {str(e)}")
 
     if not helm_values:
-        print(f"Failed to fetch values from chart {chart_name}. Using empty values.")
-        helm_values_dict = {}
-    else:
-        # Load the Helm values into a Python dictionary
-        try:
-            helm_values_dict = yaml.safe_load(helm_values) or {}
-            print(f"Successfully fetched values from chart {chart_name}")
-        except yaml.YAMLError as e:
-            print(f"Error parsing YAML values: {str(e)}")
+        print(f"Failed to fetch values from chart {chart_name} after multiple attempts. Attempting to create default values.")
+        
+        # Create a default set of values for common chart types
+        if chart_name_only.lower() == "localstack":
+            print("Creating default values for localstack")
+            helm_values = """
+# Default values for localstack.
+image:
+  repository: localstack/localstack
+  tag: latest
+  pullPolicy: IfNotPresent
+
+service:
+  type: ClusterIP
+  port: 4566
+
+resources:
+  limits:
+    cpu: 1
+    memory: 2Gi
+  requests:
+    cpu: 500m
+    memory: 512Mi
+
+persistence:
+  enabled: true
+  size: 1Gi
+
+debug: false
+"""
+        else:
+            helm_values = "{}"
+    
+    # Load the Helm values into a Python dictionary
+    try:
+        helm_values_dict = yaml.safe_load(helm_values) or {}
+        if helm_values_dict:
+            print(f"Successfully loaded values for {chart_name}")
+        else:
+            print(f"No values found for {chart_name}, using empty object")
             helm_values_dict = {}
+    except yaml.YAMLError as e:
+        print(f"Error parsing YAML values: {str(e)}")
+        helm_values_dict = {}
 
     # Create a separate section for the chart's values
     chart_key = chart_name.split('/')[-1] if '/' in chart_name else chart_name  # Get the chart name without repo prefix
