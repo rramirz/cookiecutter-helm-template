@@ -1,7 +1,7 @@
 {
-  "chart_name": null,
-  "chart_version": null,
-  "chart_repository": null,
+  "chart_name": "my-chart",
+  "chart_version": "",
+  "chart_repository": "",
   "__prompts__": {
     "chart_name": "Name of chart you want to install"
   }

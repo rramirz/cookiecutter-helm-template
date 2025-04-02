@@ -45,15 +45,46 @@ def find_chart_details(chart_name):
                 raise FailedHookException(f"Still no charts found for '{chart_name}' after adding repository.")
         else:
             raise FailedHookException(f"Operation cancelled. No charts found for '{chart_name}'.")
+
+    # Group charts by repository
+    charts_by_repo = {}
+    for chart in charts:
+        repo_name = chart["name"].split('/')[0]
+        if repo_name not in charts_by_repo:
+            charts_by_repo[repo_name] = []
+        charts_by_repo[repo_name].append(chart)
     
-    # Get the list of versions and the latest chart
-    latest_chart = charts[0]
-    versions = sorted(set([chart["version"] for chart in charts]), reverse=True)
-    chart_name_parts = latest_chart["name"].split('/')
+    # Sort each repo's charts by version and take the 5 latest
+    selected_chart = None
+    available_charts = []
+    
+    for repo_name, repo_charts in charts_by_repo.items():
+        # Sort by version (assuming semantic versioning)
+        repo_charts.sort(key=lambda c: c["version"], reverse=True)
+        # Take 5 latest versions
+        latest_five = repo_charts[:5]
+        
+        # Print available versions for this repo
+        print(f"\nRepo: {repo_name}")
+        for i, chart in enumerate(latest_five, 1):
+            chart_name = chart["name"]
+            version = chart["version"]
+            print(f"{i}. {chart_name} - v{version}")
+        
+        available_charts.extend(latest_five)
+    
+    # Let user select a chart
+    selected_index = 0
+    if len(available_charts) > 1:
+        choice = input(f"\nSelect chart [1-{len(available_charts)}] (default: 1): ").strip()
+        if choice.isdigit():
+            selected_index = int(choice) - 1
+            if selected_index < 0 or selected_index >= len(available_charts):
+                selected_index = 0
+    
+    selected_chart = available_charts[selected_index]
+    chart_name_parts = selected_chart["name"].split('/')
     repo_name = chart_name_parts[0]
-    
-    # In case the chart_name was partial, get the full chart name
-    full_chart_name = latest_chart["name"]
     
     # Get the repository URL
     chart_repo = run_helm_command("helm repo list -o json")
@@ -63,21 +94,11 @@ def find_chart_details(chart_name):
     if not repo_url:
         raise FailedHookException(f"Repository URL not found for repo '{repo_name}'.")
     
-    return full_chart_name, versions, repo_url
+    return selected_chart["name"], selected_chart["version"], repo_url
 
+# This function is no longer needed as version selection is now handled in find_chart_details
 def select_version(versions):
-    print("\nAvailable versions:")
-    for i, version in enumerate(versions, start=1):
-        print(f"{i}. {version}")
-    
-    choice = input(f"Choose a version [1-{len(versions)}] (default: latest): ").strip()
-    if choice.isdigit():
-        choice_index = int(choice) - 1
-        if 0 <= choice_index < len(versions):
-            return versions[choice_index]
-    
     # Default to the latest version
-    print(f"Defaulting to the latest version: {versions[0]}")
     return versions[0]
 
 def update_cookiecutter_json(chart_name, chart_version, chart_repository):
@@ -109,18 +130,15 @@ def main():
         chart_name = get_chart_name()
     
     # Find chart details (version and repo)
-    full_chart_name, versions, chart_repo = find_chart_details(chart_name)
-    
-    # Let the user select a version
-    selected_version = select_version(versions)
+    full_chart_name, chart_version, chart_repo = find_chart_details(chart_name)
     
     print(f"\nSelected chart details:")
     print(f"  Chart Name: {full_chart_name}")
-    print(f"  Chart Version: {selected_version}")
+    print(f"  Chart Version: {chart_version}")
     print(f"  Chart Repository: {chart_repo}")
     
     # Update cookiecutter.json with the selected values
-    update_cookiecutter_json(full_chart_name, selected_version, chart_repo)
+    update_cookiecutter_json(full_chart_name, chart_version, chart_repo)
     
     # Exit with a special code to signal cookiecutter to reload the context
     sys.exit(0)
