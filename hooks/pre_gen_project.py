@@ -1,175 +1,210 @@
 import subprocess
-import json
+import yaml
 import os
 import sys
-from cookiecutter.exceptions import FailedHookException
+import json
 
+# Try to get values from temporary file first (created by pre_gen_project.py)
+tmp_file = os.path.join(os.getcwd(), "_cookiecutter_helm_vars.json")
+chart_name = None
+chart_version = None
+chart_repository = None
+
+try:
+    if os.path.exists(tmp_file):
+        with open(tmp_file, "r") as f:
+            tmp_data = json.load(f)
+            chart_name = tmp_data.get("chart_name")
+            chart_version = tmp_data.get("chart_version")
+            chart_repository = tmp_data.get("chart_repository")
+        # Remove the temporary file
+        os.remove(tmp_file)
+except Exception as e:
+    print(f"Warning: Could not read temporary file: {str(e)}")
+
+# If not found in temp file, try environment variables
+if not chart_name:
+    chart_name = os.environ.get("COOKIECUTTER_CHART_NAME", "{{cookiecutter.chart_name}}")
+if not chart_version:
+    chart_version = os.environ.get("COOKIECUTTER_CHART_VERSION", "{{cookiecutter.chart_version}}")
+if not chart_repository:
+    chart_repository = os.environ.get("COOKIECUTTER_CHART_REPOSITORY", "{{cookiecutter.chart_repository}}")
+
+# Fallback to direct template values if needed
+if not chart_name or chart_name == "{{cookiecutter.chart_name}}":
+    chart_name = "{{cookiecutter.chart_name}}"
+
+# Clean up empty strings
+if not chart_version or chart_version == "" or chart_version == "{{cookiecutter.chart_version}}":
+    chart_version = None
+if not chart_repository or chart_repository == "" or chart_repository == "{{cookiecutter.chart_repository}}":
+    chart_repository = None
+
+# Define the path to the values.yaml file
+values_yaml_path = "values.yaml"
+
+# Function to run a Helm command and return the output
 def run_helm_command(command):
     try:
-        result = subprocess.run(command, shell=True, text=True, capture_output=True, check=True)
-        return result.stdout.strip()
-    except subprocess.CalledProcessError as e:
-        raise FailedHookException(f"Command failed: {e.stderr.strip()}")
+        print(f"Running: {command}")
+        result = subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, shell=True)
+        if result.returncode != 0:
+            print(f"Warning: Command '{command}' failed with error: {result.stderr}")
+            return ""
+        return result.stdout
+    except Exception as e:
+        print(f"Error running command '{command}': {str(e)}")
+        return ""
 
-def get_chart_name():
-    chart_name = input("\nEnter the name of the Helm chart you want to install: ").strip()
-    if not chart_name:
-        raise FailedHookException("Chart name cannot be empty.")
-    return chart_name
+# Function to populate values from Helm chart to values.yaml
+def populate_values_from_helm_chart():
+    # Check if Helm is available
+    try:
+        helm_version = run_helm_command("helm version --short")
+        if not helm_version:
+            print("Helm not found or not working properly. Please make sure Helm is installed.")
+            return
+        print(f"Using Helm {helm_version.strip()}")
+    except FileNotFoundError:
+        print("Helm not found. Please make sure Helm is installed.")
+        return
 
-def find_chart_details(chart_name):
-    # Search for the chart in the Helm repo
-    print(f"Searching Helm repositories for chart: {chart_name}")
-    search_output = run_helm_command(f"helm search repo {chart_name} -o json")
-    charts = json.loads(search_output)
+    print(f"Fetching values from chart: {chart_name}")
+    if chart_repository:
+        print(f"Repository: {chart_repository}")
+    if chart_version:
+        print(f"Version: {chart_version}")
+
+    # Try multiple approaches to get the values
+    helm_values = ""
     
-    if not charts:
-        # Chart not found, ask if user wants to add a new repo
-        add_repo = input(f"No charts found for '{chart_name}' in existing repositories. Would you like to add a new repository? (y/n): ").strip().lower()
-        if add_repo == 'y' or add_repo == 'yes':
-            repo_name = input("Enter repository name: ").strip()
-            repo_url = input("Enter repository URL: ").strip()
-            
-            if not repo_name or not repo_url:
-                raise FailedHookException("Repository name and URL cannot be empty.")
-            
-            print(f"Adding Helm repository '{repo_name}' with URL '{repo_url}'...")
-            run_helm_command(f"helm repo add {repo_name} {repo_url}")
-            run_helm_command("helm repo update")
-            
-            # Search again after adding the new repo
-            search_output = run_helm_command(f"helm search repo {chart_name} -o json")
-            charts = json.loads(search_output)
-            
-            if not charts:
-                raise FailedHookException(f"Still no charts found for '{chart_name}' after adding repository.")
+    # The correct command format: helm show values --repo REPO CHART --version VERSION
+    if chart_repository:
+        # Extract just the chart name without the repo prefix
+        chart_name_only = chart_name.split('/')[-1] if '/' in chart_name else chart_name
+        helm_command = f"helm show values --repo {chart_repository} {chart_name_only}"
+        if chart_version:
+            helm_command += f" --version {chart_version}"
+        print(f"Running command: {helm_command}")
+        helm_values = run_helm_command(helm_command)
+    
+    # If that didn't work, try without the repo flag
+    if not helm_values and "/" in chart_name:
+        helm_command = f"helm show values {chart_name}"
+        if chart_version:
+            helm_command += f" --version {chart_version}"
+        print(f"Running command: {helm_command}")
+        helm_values = run_helm_command(helm_command)
+    
+    # If still no values, try to pull the chart
+    if not helm_values:
+        temp_dir = "/tmp/helm-chart-pull"
+        os.makedirs(temp_dir, exist_ok=True)
+        
+        # Try to pull the chart
+        print(f"Trying to fetch the chart using helm pull...")
+        chart_name_only = chart_name.split('/')[-1] if '/' in chart_name else chart_name
+        
+        if chart_repository:
+            pull_command = f"helm pull --repo {chart_repository} {chart_name_only}"
         else:
-            raise FailedHookException(f"Operation cancelled. No charts found for '{chart_name}'.")
-
-    # Group charts by repository
-    charts_by_repo = {}
-    for chart in charts:
-        repo_name = chart["name"].split('/')[0]
-        if repo_name not in charts_by_repo:
-            charts_by_repo[repo_name] = []
-        charts_by_repo[repo_name].append(chart)
-    
-    # Sort each repo's charts by version and take the 5 latest
-    selected_chart = None
-    available_charts = []
-    
-    for repo_name, repo_charts in charts_by_repo.items():
-        # Sort by version (assuming semantic versioning)
-        repo_charts.sort(key=lambda c: c["version"], reverse=True)
-        # Take 5 latest versions
-        latest_five = repo_charts[:5]
+            pull_command = f"helm pull {chart_name}"
+            
+        if chart_version:
+            pull_command += f" --version {chart_version}"
+        pull_command += f" --untar --untardir {temp_dir}"
         
-        # Print available versions for this repo
-        print(f"\nRepo: {repo_name}")
-        for i, chart in enumerate(latest_five, 1):
-            chart_name = chart["name"]
-            version = chart["version"]
-            print(f"{i}. {chart_name} - v{version}")
+        run_helm_command(pull_command)
         
-        available_charts.extend(latest_five)
-    
-    # Let user select a chart
-    selected_index = 0
-    if len(available_charts) > 1:
-        choice = input(f"\nSelect chart [1-{len(available_charts)}] (default: 1): ").strip()
-        if choice.isdigit():
-            selected_index = int(choice) - 1
-            if selected_index < 0 or selected_index >= len(available_charts):
-                selected_index = 0
-    
-    selected_chart = available_charts[selected_index]
-    full_chart_name = selected_chart["name"]
-    chart_version = selected_chart["version"]
-    repo_name = full_chart_name.split('/')[0]
-    
-    # Get the repository URL
-    chart_repo = run_helm_command("helm repo list -o json")
-    chart_repo_list = json.loads(chart_repo)
-    repo_url = next((repo["url"] for repo in chart_repo_list if repo["name"] == repo_name), None)
-    
-    if not repo_url:
-        raise FailedHookException(f"Repository URL not found for repo '{repo_name}'.")
-    
-    return full_chart_name, chart_version, repo_url
+        # Try to find the chart directory
+        if os.path.exists(temp_dir):
+            chart_dirs = [d for d in os.listdir(temp_dir) if os.path.isdir(os.path.join(temp_dir, d))]
+            if chart_dirs:
+                values_path = os.path.join(temp_dir, chart_dirs[0], "values.yaml")
+                if os.path.exists(values_path):
+                    print(f"Found values.yaml in pulled chart at {values_path}")
+                    try:
+                        with open(values_path, "r") as f:
+                            helm_values = f.read()
+                    except Exception as e:
+                        print(f"Error reading values.yaml from pulled chart: {str(e)}")
 
-# This function is no longer needed as version selection is now handled in find_chart_details
-def select_version(versions):
-    # Default to the latest version
-    return versions[0]
+    if not helm_values:
+        print(f"Failed to fetch values from chart {chart_name} after multiple attempts. Using empty values.")
+        helm_values_dict = {}
+    else:
+        # Load the Helm values into a Python dictionary
+        try:
+            helm_values_dict = yaml.safe_load(helm_values) or {}
+            print(f"Successfully fetched values from chart {chart_name}")
+        except yaml.YAMLError as e:
+            print(f"Error parsing YAML values: {str(e)}")
+            helm_values_dict = {}
 
-def update_cookiecutter_json(chart_name, chart_version, chart_repository):
-    # Use the environment variable that Cookiecutter sets
-    template_dir = os.environ.get('COOKIECUTTER_TEMPLATE_DIR', os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-    cookiecutter_json_path = os.path.join(template_dir, "cookiecutter.json")
-    
-    # Make sure the path exists before trying to open it
-    if not os.path.exists(cookiecutter_json_path):
-        print(f"Warning: cookiecutter.json not found at {cookiecutter_json_path}")
-        print(f"Using current directory instead")
-        cookiecutter_json_path = os.path.join(os.getcwd(), "cookiecutter.json")
-    
-    # Read the current cookiecutter.json
-    with open(cookiecutter_json_path, "r") as f:
-        context = json.load(f)
-    
-    # Update the context with our values
-    context["chart_name"] = chart_name
-    context["chart_version"] = chart_version
-    context["chart_repository"] = chart_repository
-    
-    # Write the updated context back
-    with open(cookiecutter_json_path, "w") as f:
-        json.dump(context, f, indent=2)
-    
-    return cookiecutter_json_path
+    # Create a separate section for the chart's values
+    chart_key = chart_name.split('/')[-1] if '/' in chart_name else chart_name  # Get the chart name without repo prefix
+    modified_values_dict = {chart_key: helm_values_dict}
 
-def main():
-    # Get chart name from user input
-    chart_name = "{{ cookiecutter.chart_name }}"
-    
-    # If chart_name is null or the default, ask the user
-    if chart_name == "null" or chart_name == "my-chart":
-        chart_name = get_chart_name()
-    
-    # Find chart details (version and repo)
-    full_chart_name, chart_version, chart_repo = find_chart_details(chart_name)
-    
-    print(f"\nSelected chart details:")
-    print(f"  Chart Name: {full_chart_name}")
-    print(f"  Chart Version: {chart_version}")
-    print(f"  Chart Repository: {chart_repo}")
-    
-    # Store values in environment variables so post_gen can access them
-    os.environ["COOKIECUTTER_CHART_NAME"] = full_chart_name
-    os.environ["COOKIECUTTER_CHART_VERSION"] = chart_version
-    os.environ["COOKIECUTTER_CHART_REPOSITORY"] = chart_repo
-    
-    # Record values in a temporary file that post_gen can read
-    tmp_file = os.path.join(os.getcwd(), "_cookiecutter_helm_vars.json")
+    # Make sure values.yaml exists and is readable
     try:
-        with open(tmp_file, "w") as f:
-            json.dump({
-                "chart_name": full_chart_name,
-                "chart_version": chart_version,
-                "chart_repository": chart_repo
-            }, f)
-    except Exception as e:
-        print(f"Warning: Could not write temporary file {tmp_file}: {str(e)}")
-    
-    # Try to update cookiecutter.json, but continue if it fails
+        with open(values_yaml_path, "r") as values_file:
+            existing_values = yaml.safe_load(values_file) or {}
+    except (FileNotFoundError, yaml.YAMLError):
+        existing_values = {}
+
+    # Merge the existing values with the chart values
+    merged_values = {**existing_values, **modified_values_dict}
+
+    # Write the merged values to the values.yaml file
     try:
-        update_cookiecutter_json(full_chart_name, chart_version, chart_repo)
+        with open(values_yaml_path, "w") as values_file:
+            yaml.dump(merged_values, values_file, default_flow_style=False, sort_keys=False)
+        print(f"Values populated from {chart_name} to {values_yaml_path}")
     except Exception as e:
-        print(f"Warning: Could not update cookiecutter.json: {str(e)}")
-        print("Continuing with generation...")
+        print(f"Error writing to {values_yaml_path}: {str(e)}")
+
+def update_chart_yaml():
+    """Update the Chart.yaml file with additional metadata from the selected chart."""
+    chart_yaml_path = "Chart.yaml"
     
-    # Exit with success code
-    sys.exit(0)
+    if not os.path.exists(chart_yaml_path):
+        print(f"Warning: {chart_yaml_path} not found. Skipping update.")
+        return
+    
+    try:
+        with open(chart_yaml_path, "r") as f:
+            chart_data = yaml.safe_load(f) or {}
+    except Exception as e:
+        print(f"Error reading {chart_yaml_path}: {str(e)}")
+        return
+    
+    # Add additional metadata
+    chart_data["description"] = f"Wrapper chart for {chart_name}"
+    
+    # Set version if available
+    if chart_version and chart_version != "":
+        chart_data["version"] = chart_version
+    else:
+        # Get the version from pre_gen environment or set a default
+        default_version = "0.1.0"
+        chart_data["version"] = default_version
+    
+    # Set appVersion
+    chart_data["appVersion"] = chart_version if chart_version and chart_version != "" else "latest"
+    
+    # Add source info
+    if chart_repository and chart_repository != "":
+        chart_data["sources"] = [chart_repository]
+    
+    # Write back to Chart.yaml
+    try:
+        with open(chart_yaml_path, "w") as f:
+            yaml.dump(chart_data, f, default_flow_style=False, sort_keys=False)
+        print(f"Updated {chart_yaml_path} with metadata from {chart_name}")
+    except Exception as e:
+        print(f"Error writing to {chart_yaml_path}: {str(e)}")
 
 if __name__ == "__main__":
-    main()
+    populate_values_from_helm_chart()
+    update_chart_yaml()
+    print("\nChart generation completed successfully!")
