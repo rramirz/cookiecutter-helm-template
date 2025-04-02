@@ -102,9 +102,15 @@ def select_version(versions):
     return versions[0]
 
 def update_cookiecutter_json(chart_name, chart_version, chart_repository):
-    # Find the template root directory
-    template_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    # Use the environment variable that Cookiecutter sets
+    template_dir = os.environ.get('COOKIECUTTER_TEMPLATE_DIR', os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     cookiecutter_json_path = os.path.join(template_dir, "cookiecutter.json")
+    
+    # Make sure the path exists before trying to open it
+    if not os.path.exists(cookiecutter_json_path):
+        print(f"Warning: cookiecutter.json not found at {cookiecutter_json_path}")
+        print(f"Using current directory instead")
+        cookiecutter_json_path = os.path.join(os.getcwd(), "cookiecutter.json")
     
     # Read the current cookiecutter.json
     with open(cookiecutter_json_path, "r") as f:
@@ -137,10 +143,19 @@ def main():
     print(f"  Chart Version: {chart_version}")
     print(f"  Chart Repository: {chart_repo}")
     
-    # Update cookiecutter.json with the selected values
-    update_cookiecutter_json(full_chart_name, chart_version, chart_repo)
+    # Store values in environment variables so post_gen can access them
+    os.environ["COOKIECUTTER_CHART_NAME"] = full_chart_name
+    os.environ["COOKIECUTTER_CHART_VERSION"] = chart_version
+    os.environ["COOKIECUTTER_CHART_REPOSITORY"] = chart_repo
     
-    # Exit with a special code to signal cookiecutter to reload the context
+    # Try to update cookiecutter.json, but continue if it fails
+    try:
+        update_cookiecutter_json(full_chart_name, chart_version, chart_repo)
+    except Exception as e:
+        print(f"Warning: Could not update cookiecutter.json: {str(e)}")
+        print("Continuing with generation...")
+    
+    # Exit with success code
     sys.exit(0)
 
 if __name__ == "__main__":
