@@ -264,7 +264,7 @@ debug: false
         print(f"Error writing to {values_yaml_path}: {str(e)}")
 
 def update_chart_yaml():
-    """Update the Chart.yaml file with additional metadata from the selected chart."""
+    """Update the Chart.yaml file with placeholders replaced by actual values from chart selection."""
     chart_yaml_path = "Chart.yaml"
     
     if not os.path.exists(chart_yaml_path):
@@ -273,33 +273,30 @@ def update_chart_yaml():
     
     try:
         with open(chart_yaml_path, "r") as f:
-            chart_data = yaml.safe_load(f) or {}
+            chart_yaml_content = f.read()
     except Exception as e:
         print(f"Error reading {chart_yaml_path}: {str(e)}")
         return
     
-    # Add additional metadata
-    chart_data["description"] = f"Wrapper chart for {chart_name}"
+    # Extract chart name without repo prefix
+    chart_name_only = chart_name.split('/')[-1] if '/' in chart_name else chart_name
+    chart_name_title = chart_name_only.capitalize()
     
-    # Set version if available
-    if chart_version and chart_version != "":
-        chart_data["version"] = chart_version
-    else:
-        # Get the version from pre_gen environment or set a default
-        default_version = "0.1.0"
-        chart_data["version"] = default_version
+    # Replace placeholders with actual values
+    replacements = {
+        "__CHART_NAME__": chart_name_only,
+        "__CHART_NAME_TITLE__": chart_name_title,
+        "__CHART_VERSION__": chart_version if chart_version else "latest",
+        "__CHART_REPOSITORY__": chart_repository if chart_repository else ""
+    }
     
-    # Set appVersion
-    chart_data["appVersion"] = chart_version if chart_version and chart_version != "" else "latest"
-    
-    # Add source info
-    if chart_repository and chart_repository != "":
-        chart_data["sources"] = [chart_repository]
+    for placeholder, value in replacements.items():
+        chart_yaml_content = chart_yaml_content.replace(placeholder, value)
     
     # Write back to Chart.yaml
     try:
         with open(chart_yaml_path, "w") as f:
-            yaml.dump(chart_data, f, default_flow_style=False, sort_keys=False)
+            f.write(chart_yaml_content)
         print(f"Updated {chart_yaml_path} with metadata from {chart_name}")
     except Exception as e:
         print(f"Error writing to {chart_yaml_path}: {str(e)}")

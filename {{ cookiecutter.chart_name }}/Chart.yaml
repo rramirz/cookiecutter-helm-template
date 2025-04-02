@@ -1,6 +1,10 @@
 apiVersion: v2
-name: {{ cookiecutter.chart_name }}
-description: Helm chart for {{ cookiecutter.chart_name }}
+appVersion: "__CHART_VERSION__"
+description: A Helm chart for __CHART_NAME_TITLE__
+name: __CHART_NAME__
 type: application
 version: 0.1.0
-appVersion: "1.0.0"
+dependencies:
+  - name: __CHART_NAME__
+    repository: __CHART_REPOSITORY__
+    version: __CHART_VERSION__
